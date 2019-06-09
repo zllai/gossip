@@ -1,0 +1,28 @@
+syntax = "proto3";
+package message;
+
+message GossipMsg {
+    string topic = 1;
+    oneof content {
+        NeighborReq neighborReq = 2;
+        NeighborRes neighborRes = 3;
+        Data data = 4;
+    }
+}
+
+message NeighborReq {
+    int32 maxNum = 1;
+}
+
+message NeighborRes {
+    message Addr {
+        string ip = 1;
+        int32 port = 2;
+    }
+    repeated Addr nodes = 1;
+}
+
+message Data {
+    bytes payload = 1;
+}
+

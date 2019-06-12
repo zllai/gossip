@@ -13,7 +13,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Println("Usage:\n\tgossip [topic] [listenIP:Port] [BootNodeIP:Port]...")
+		fmt.Println("Usage:\n\tgossip [topic] [listenIP:Port] [existingNodeIP:Port]...")
 		os.Exit(1)
 	}
 	topic := os.Args[1]

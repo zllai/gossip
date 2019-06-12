@@ -1,14 +1,13 @@
 package gossip
 
 import (
+	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"log"
+	"math/rand"
 	"net"
 	"time"
-
-	"errors"
-
-	"crypto/md5"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/zllai/gossip/filter"
@@ -78,10 +77,12 @@ func (node *Node) serve(addr net.Addr, data []byte) error {
 			}
 		}
 	case *message.GossipMsg_Data:
+		data := content.Data.Payload
+		nonce := content.Data.Nonce
 		md5Func := md5.New()
-		hash := md5Func.Sum(content.Data.Payload)
+		hash := md5Func.Sum(append(data, nonce...))
 		if node.msgFilter.Check(hex.EncodeToString(hash)) {
-			err = message.GossipToNodes(node.conn, node.neighbors.Sample(gossipFanout), node.topic, content.Data.Payload)
+			err = message.GossipToNodes(node.conn, node.neighbors.Sample(gossipFanout), node.topic, data, nonce)
 			if err != nil {
 				log.Printf("Cannot gossip message: %s", err.Error())
 			}
@@ -156,10 +157,15 @@ func (node *Node) StopDiscover() {
 }
 
 func (node *Node) Gossip(data []byte) error {
+	nonce := make([]byte, 4)
+	_, err := rand.Read(nonce)
+	if err != nil {
+		return err
+	}
 	md5Func := md5.New()
-	hash := md5Func.Sum(data)
+	hash := md5Func.Sum(append(data, nonce...))
 	node.msgFilter.Check(hex.EncodeToString(hash))
-	err := message.GossipToNodes(node.conn, node.neighbors.Sample(broadcastFanout), node.topic, data)
+	err = message.GossipToNodes(node.conn, node.neighbors.Sample(broadcastFanout), node.topic, data, nonce)
 	return err
 }
 

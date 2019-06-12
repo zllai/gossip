@@ -1,10 +1,10 @@
 # Gossip broadcast
 This is a library implementating gossip protocol for general purpose message broadcast in peer to peer network.
 
-It is similar to the one used in bitcoin or Ethereum blockchain, but this implementation is simpler, cleaner.
+It is similar to the one used in bitcoin or Ethereum blockchain, but this implementation is simpler and cleaner.
 
 ## Usage
-The usage of this library is straight forward, please see the example
+The usage of this library is straight forward, please see the example.
 
 ## Example
 ### build example

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
 	"fmt"
 	"log"
 	"net"
@@ -38,16 +37,13 @@ func main() {
 	go func() {
 		for {
 			msg := node.GetMsg()
-			msg = msg[:len(msg)-4]
 			fmt.Println(string(msg))
 		}
 	}()
 
 	input, _, err := reader.ReadLine()
 	for err == nil {
-		nonce := make([]byte, 4)
-		rand.Read(nonce)
-		err = node.Gossip(append(input, nonce...))
+		err = node.Gossip(input)
 		if err != nil {
 			log.Println(err.Error())
 		}

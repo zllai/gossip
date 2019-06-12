@@ -56,10 +56,13 @@ func RequestNeighborList(conn net.PacketConn, addr net.Addr, topic string, maxNu
 	return nil
 }
 
-func GossipToNodes(conn net.PacketConn, addrs []net.Addr, topic string, data []byte) error {
+func GossipToNodes(conn net.PacketConn, addrs []net.Addr, topic string, data []byte, nonce []byte) error {
 	pkt := &GossipMsg{
-		Topic:   topic,
-		Content: &GossipMsg_Data{Data: &Data{Payload: data}},
+		Topic: topic,
+		Content: &GossipMsg_Data{Data: &Data{
+			Nonce:   nonce,
+			Payload: data,
+		}},
 	}
 	pktBytes, err := proto.Marshal(pkt)
 	if err != nil {

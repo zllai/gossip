@@ -23,6 +23,7 @@ message NeighborRes {
 }
 
 message Data {
-    bytes payload = 1;
+    bytes nonce = 1;
+    bytes payload = 2;
 }
 

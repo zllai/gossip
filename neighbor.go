@@ -17,6 +17,11 @@ type NeighborList struct {
 	self         net.Addr
 }
 
+type NodeInfo struct {
+	Addr       string `json:"addr"`
+	LastActive int64  `json:"lastActive"`
+}
+
 func NewNeighborList(capacity int, self net.Addr) *NeighborList {
 	return &NeighborList{capacity, make(map[string]int64), &sync.Mutex{}, self}
 }
@@ -82,4 +87,12 @@ func (nl *NeighborList) Print() {
 	for k, v := range nl.ActiveRecord {
 		fmt.Printf("%s\t%d\n", k, v)
 	}
+}
+
+func (nl *NeighborList) List() []NodeInfo {
+	ret := make([]NodeInfo, 0)
+	for k, v := range nl.ActiveRecord {
+		ret = append(ret, NodeInfo{k, v})
+	}
+	return ret
 }

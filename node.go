@@ -17,7 +17,7 @@ import (
 
 const bufferCap = 5242880 // 5MB
 const neighborListCap = 256
-const gossipFanout = 64
+const gossipFanout = 100
 const broadcastFanout = 256
 
 type Node struct {
@@ -41,7 +41,7 @@ func New(addr net.Addr, topic string) *Node {
 		conn:        conn,
 		neighbors:   NewNeighborList(neighborListCap, addr),
 		discovering: false,
-		msgBuffer:   ringbuffer.New(64),
+		msgBuffer:   ringbuffer.New(512),
 		msgFilter:   filter.New(60),
 	}
 }
@@ -53,30 +53,31 @@ func (node *Node) serve(addr net.Addr, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if msg.Topic != node.topic {
-		return errors.New("Topic mismatch")
-	}
+
 	switch content := msg.Content.(type) {
 	case *message.GossipMsg_NeighborReq:
+		if content.NeighborReq.Topic != node.topic {
+			return errors.New("Topic mismatch")
+		}
 		samples := node.neighbors.Sample(int(content.NeighborReq.MaxNum))
 		message.ResponseNeighborList(node.conn, addr, node.topic, samples)
-		if node.neighbors.Update(addr) {
-			log.Printf("New node : %s", addr.String())
-		}
+		node.neighbors.Update(addr)
 	case *message.GossipMsg_NeighborRes:
+		if content.NeighborRes.Topic != node.topic {
+			return errors.New("Topic mismatch")
+		}
 		if node.neighbors.Len() < node.neighbors.Capacity {
 			neighborRes := content.NeighborRes.Nodes
 			for i := 0; i < len(neighborRes); i++ {
-				newNeighbor := message.ResAddr2Addr(neighborRes[i])
-				if node.neighbors.Update(newNeighbor) {
-					log.Printf("New node : %s", newNeighbor.String())
-				}
+				newNeighbor := message.ResAddr2UDPAddr(neighborRes[i])
+				node.neighbors.Update(newNeighbor)
 			}
-			if node.neighbors.Update(addr) {
-				log.Printf("New node : %s", addr.String())
-			}
+			node.neighbors.Update(addr)
 		}
 	case *message.GossipMsg_Data:
+		if content.Data.Topic != node.topic {
+			return errors.New("Topic mismatch")
+		}
 		data := content.Data.Payload
 		nonce := content.Data.Nonce
 		md5Func := md5.New()
@@ -137,16 +138,17 @@ func (node *Node) StartDiscover() error {
 	go func() {
 		for node.discovering {
 			if node.neighbors.Len() >= neighborListCap {
+				time.Sleep(10 * time.Second)
 				continue
 			}
 			samples := node.neighbors.Sample(5)
 			for i := 0; i < len(samples); i++ {
-				err := message.RequestNeighborList(node.conn, samples[i], node.topic, 10)
+				err := message.RequestNeighborList(node.conn, samples[i], node.topic, (neighborListCap-node.neighbors.Len())/len(samples))
 				if err != nil {
 					log.Printf("Cannot connect to peer %s: %s", samples[i].String(), err.Error())
 				}
 			}
-			time.Sleep(10e9)
+			time.Sleep(10 * time.Second)
 		}
 	}()
 	return nil
@@ -175,4 +177,8 @@ func (node *Node) GetMsg() []byte {
 
 func (node *Node) PrintPeers() {
 	node.neighbors.Print()
+}
+
+func (node *Node) ListPeers() []NodeInfo {
+	return node.neighbors.List()
 }

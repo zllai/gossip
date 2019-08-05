@@ -4,9 +4,14 @@
 package message
 
 import (
+	context "context"
 	fmt "fmt"
-	proto "github.com/golang/protobuf/proto"
 	math "math"
+
+	proto "github.com/golang/protobuf/proto"
+	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -21,7 +26,6 @@ var _ = math.Inf
 const _ = proto.ProtoPackageIsVersion3 // please upgrade the proto package
 
 type GossipMsg struct {
-	Topic string `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
 	// Types that are valid to be assigned to Content:
 	//	*GossipMsg_NeighborReq
 	//	*GossipMsg_NeighborRes
@@ -57,13 +61,6 @@ func (m *GossipMsg) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_GossipMsg proto.InternalMessageInfo
 
-func (m *GossipMsg) GetTopic() string {
-	if m != nil {
-		return m.Topic
-	}
-	return ""
-}
-
 type isGossipMsg_Content interface {
 	isGossipMsg_Content()
 }
@@ -77,7 +74,7 @@ type GossipMsg_NeighborRes struct {
 }
 
 type GossipMsg_Data struct {
-	Data *Data `protobuf:"bytes,4,opt,name=data,proto3,oneof"`
+	Data *GossipData `protobuf:"bytes,4,opt,name=data,proto3,oneof"`
 }
 
 func (*GossipMsg_NeighborReq) isGossipMsg_Content() {}
@@ -107,7 +104,7 @@ func (m *GossipMsg) GetNeighborRes() *NeighborRes {
 	return nil
 }
 
-func (m *GossipMsg) GetData() *Data {
+func (m *GossipMsg) GetData() *GossipData {
 	if x, ok := m.GetContent().(*GossipMsg_Data); ok {
 		return x.Data
 	}
@@ -123,8 +120,40 @@ func (*GossipMsg) XXX_OneofWrappers() []interface{} {
 	}
 }
 
+type Empty struct {
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *Empty) Reset()         { *m = Empty{} }
+func (m *Empty) String() string { return proto.CompactTextString(m) }
+func (*Empty) ProtoMessage()    {}
+func (*Empty) Descriptor() ([]byte, []int) {
+	return fileDescriptor_33c57e4bae7b9afd, []int{1}
+}
+
+func (m *Empty) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_Empty.Unmarshal(m, b)
+}
+func (m *Empty) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_Empty.Marshal(b, m, deterministic)
+}
+func (m *Empty) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Empty.Merge(m, src)
+}
+func (m *Empty) XXX_Size() int {
+	return xxx_messageInfo_Empty.Size(m)
+}
+func (m *Empty) XXX_DiscardUnknown() {
+	xxx_messageInfo_Empty.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Empty proto.InternalMessageInfo
+
 type NeighborReq struct {
-	MaxNum               int32    `protobuf:"varint,1,opt,name=maxNum,proto3" json:"maxNum,omitempty"`
+	Topic                string   `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	MaxNum               int32    `protobuf:"varint,2,opt,name=maxNum,proto3" json:"maxNum,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -134,7 +163,7 @@ func (m *NeighborReq) Reset()         { *m = NeighborReq{} }
 func (m *NeighborReq) String() string { return proto.CompactTextString(m) }
 func (*NeighborReq) ProtoMessage()    {}
 func (*NeighborReq) Descriptor() ([]byte, []int) {
-	return fileDescriptor_33c57e4bae7b9afd, []int{1}
+	return fileDescriptor_33c57e4bae7b9afd, []int{2}
 }
 
 func (m *NeighborReq) XXX_Unmarshal(b []byte) error {
@@ -155,6 +184,13 @@ func (m *NeighborReq) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_NeighborReq proto.InternalMessageInfo
 
+func (m *NeighborReq) GetTopic() string {
+	if m != nil {
+		return m.Topic
+	}
+	return ""
+}
+
 func (m *NeighborReq) GetMaxNum() int32 {
 	if m != nil {
 		return m.MaxNum
@@ -163,7 +199,8 @@ func (m *NeighborReq) GetMaxNum() int32 {
 }
 
 type NeighborRes struct {
-	Nodes                []*NeighborRes_Addr `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Topic                string              `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	Nodes                []*NeighborRes_Addr `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	XXX_NoUnkeyedLiteral struct{}            `json:"-"`
 	XXX_unrecognized     []byte              `json:"-"`
 	XXX_sizecache        int32               `json:"-"`
@@ -173,7 +210,7 @@ func (m *NeighborRes) Reset()         { *m = NeighborRes{} }
 func (m *NeighborRes) String() string { return proto.CompactTextString(m) }
 func (*NeighborRes) ProtoMessage()    {}
 func (*NeighborRes) Descriptor() ([]byte, []int) {
-	return fileDescriptor_33c57e4bae7b9afd, []int{2}
+	return fileDescriptor_33c57e4bae7b9afd, []int{3}
 }
 
 func (m *NeighborRes) XXX_Unmarshal(b []byte) error {
@@ -194,6 +231,13 @@ func (m *NeighborRes) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_NeighborRes proto.InternalMessageInfo
 
+func (m *NeighborRes) GetTopic() string {
+	if m != nil {
+		return m.Topic
+	}
+	return ""
+}
+
 func (m *NeighborRes) GetNodes() []*NeighborRes_Addr {
 	if m != nil {
 		return m.Nodes
@@ -213,7 +257,7 @@ func (m *NeighborRes_Addr) Reset()         { *m = NeighborRes_Addr{} }
 func (m *NeighborRes_Addr) String() string { return proto.CompactTextString(m) }
 func (*NeighborRes_Addr) ProtoMessage()    {}
 func (*NeighborRes_Addr) Descriptor() ([]byte, []int) {
-	return fileDescriptor_33c57e4bae7b9afd, []int{2, 0}
+	return fileDescriptor_33c57e4bae7b9afd, []int{3, 0}
 }
 
 func (m *NeighborRes_Addr) XXX_Unmarshal(b []byte) error {
@@ -248,47 +292,55 @@ func (m *NeighborRes_Addr) GetPort() int32 {
 	return 0
 }
 
-type Data struct {
-	Nonce                []byte   `protobuf:"bytes,1,opt,name=nonce,proto3" json:"nonce,omitempty"`
-	Payload              []byte   `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+type GossipData struct {
+	Topic                string   `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	Nonce                []byte   `protobuf:"bytes,2,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	Payload              []byte   `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
 }
 
-func (m *Data) Reset()         { *m = Data{} }
-func (m *Data) String() string { return proto.CompactTextString(m) }
-func (*Data) ProtoMessage()    {}
-func (*Data) Descriptor() ([]byte, []int) {
-	return fileDescriptor_33c57e4bae7b9afd, []int{3}
+func (m *GossipData) Reset()         { *m = GossipData{} }
+func (m *GossipData) String() string { return proto.CompactTextString(m) }
+func (*GossipData) ProtoMessage()    {}
+func (*GossipData) Descriptor() ([]byte, []int) {
+	return fileDescriptor_33c57e4bae7b9afd, []int{4}
 }
 
-func (m *Data) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Data.Unmarshal(m, b)
+func (m *GossipData) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_GossipData.Unmarshal(m, b)
 }
-func (m *Data) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Data.Marshal(b, m, deterministic)
+func (m *GossipData) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_GossipData.Marshal(b, m, deterministic)
 }
-func (m *Data) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Data.Merge(m, src)
+func (m *GossipData) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_GossipData.Merge(m, src)
 }
-func (m *Data) XXX_Size() int {
-	return xxx_messageInfo_Data.Size(m)
+func (m *GossipData) XXX_Size() int {
+	return xxx_messageInfo_GossipData.Size(m)
 }
-func (m *Data) XXX_DiscardUnknown() {
-	xxx_messageInfo_Data.DiscardUnknown(m)
+func (m *GossipData) XXX_DiscardUnknown() {
+	xxx_messageInfo_GossipData.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_Data proto.InternalMessageInfo
+var xxx_messageInfo_GossipData proto.InternalMessageInfo
 
-func (m *Data) GetNonce() []byte {
+func (m *GossipData) GetTopic() string {
+	if m != nil {
+		return m.Topic
+	}
+	return ""
+}
+
+func (m *GossipData) GetNonce() []byte {
 	if m != nil {
 		return m.Nonce
 	}
 	return nil
 }
 
-func (m *Data) GetPayload() []byte {
+func (m *GossipData) GetPayload() []byte {
 	if m != nil {
 		return m.Payload
 	}
@@ -297,32 +349,152 @@ func (m *Data) GetPayload() []byte {
 
 func init() {
 	proto.RegisterType((*GossipMsg)(nil), "message.GossipMsg")
+	proto.RegisterType((*Empty)(nil), "message.Empty")
 	proto.RegisterType((*NeighborReq)(nil), "message.NeighborReq")
 	proto.RegisterType((*NeighborRes)(nil), "message.NeighborRes")
 	proto.RegisterType((*NeighborRes_Addr)(nil), "message.NeighborRes.Addr")
-	proto.RegisterType((*Data)(nil), "message.Data")
+	proto.RegisterType((*GossipData)(nil), "message.GossipData")
 }
 
 func init() { proto.RegisterFile("message.proto", fileDescriptor_33c57e4bae7b9afd) }
 
 var fileDescriptor_33c57e4bae7b9afd = []byte{
-	// 273 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x74, 0x91, 0x51, 0x4b, 0xf3, 0x30,
-	0x14, 0x86, 0xd7, 0xae, 0x5d, 0xe9, 0xe9, 0xf6, 0x5d, 0x84, 0xf1, 0x11, 0xbd, 0x2a, 0x15, 0xa1,
-	0x78, 0x51, 0x61, 0x82, 0x78, 0xab, 0x08, 0xee, 0xc6, 0x5d, 0xe4, 0x1f, 0x64, 0x6d, 0xa8, 0x15,
-	0x9b, 0x13, 0x7b, 0x22, 0xe8, 0x0f, 0xf4, 0x7f, 0x49, 0xd3, 0x4e, 0x3b, 0xd0, 0xbb, 0x3c, 0x9c,
-	0xf7, 0x09, 0x27, 0x6f, 0x60, 0xd5, 0x2a, 0x22, 0x59, 0xab, 0xc2, 0x74, 0x68, 0x91, 0x45, 0x23,
-	0x66, 0x9f, 0x1e, 0xc4, 0x0f, 0x48, 0xd4, 0x98, 0x47, 0xaa, 0xd9, 0x1a, 0x42, 0x8b, 0xa6, 0x29,
-	0xb9, 0x97, 0x7a, 0x79, 0x2c, 0x06, 0x60, 0x37, 0x90, 0x68, 0xd5, 0xd4, 0x4f, 0x7b, 0xec, 0x84,
-	0x7a, 0xe5, 0x7e, 0xea, 0xe5, 0xc9, 0x66, 0x5d, 0x1c, 0x6e, 0xdc, 0xfd, 0xcc, 0xb6, 0x33, 0x31,
-	0x8d, 0x1e, 0x9b, 0xc4, 0xe7, 0x7f, 0x9a, 0x74, 0x6c, 0x12, 0x3b, 0x83, 0xa0, 0x92, 0x56, 0xf2,
-	0xc0, 0x29, 0xab, 0x6f, 0xe5, 0x5e, 0x5a, 0xb9, 0x9d, 0x09, 0x37, 0xbc, 0x8b, 0x21, 0x2a, 0x51,
-	0x5b, 0xa5, 0x6d, 0x76, 0x0e, 0xc9, 0x64, 0x0f, 0xf6, 0x1f, 0x16, 0xad, 0x7c, 0xdf, 0xbd, 0xb5,
-	0xee, 0x25, 0xa1, 0x18, 0x29, 0x7b, 0x9e, 0xc6, 0x88, 0x5d, 0x42, 0xa8, 0xb1, 0x52, 0xc4, 0xbd,
-	0x74, 0x9e, 0x27, 0x9b, 0x93, 0xdf, 0x36, 0x2b, 0x6e, 0xab, 0xaa, 0x13, 0x43, 0xee, 0xf4, 0x02,
-	0x82, 0x1e, 0xd9, 0x3f, 0xf0, 0x1b, 0x33, 0xb6, 0xe4, 0x37, 0x86, 0x31, 0x08, 0x0c, 0x76, 0xd6,
-	0x75, 0x13, 0x0a, 0x77, 0xce, 0xae, 0x21, 0xe8, 0xb7, 0xed, 0x4b, 0xd5, 0xa8, 0x4b, 0xe5, 0xe2,
-	0x4b, 0x31, 0x00, 0xe3, 0x10, 0x19, 0xf9, 0xf1, 0x82, 0xb2, 0x72, 0xd2, 0x52, 0x1c, 0x70, 0xbf,
-	0x70, 0x5f, 0x74, 0xf5, 0x15, 0x00, 0x00, 0xff, 0xff, 0xfe, 0x44, 0x9c, 0x79, 0xb3, 0x01, 0x00,
-	0x00,
+	// 325 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x74, 0x92, 0x4f, 0x4f, 0xc2, 0x30,
+	0x18, 0xc6, 0xb7, 0xb1, 0x31, 0x78, 0x87, 0x1c, 0x5e, 0x89, 0x99, 0x9c, 0xc8, 0x4e, 0xe8, 0x01,
+	0x23, 0x5e, 0x48, 0x3c, 0x69, 0x34, 0x70, 0x91, 0x98, 0xfa, 0x09, 0x0a, 0x6d, 0x70, 0x89, 0x6b,
+	0xeb, 0x5a, 0x12, 0xb9, 0xf9, 0xa5, 0xfc, 0x7e, 0x86, 0x76, 0xfc, 0x4b, 0xc6, 0x6d, 0xcf, 0xfa,
+	0xfe, 0xde, 0x3c, 0x4f, 0x9f, 0xc2, 0x45, 0xc1, 0xb5, 0xa6, 0x2b, 0x3e, 0x52, 0xa5, 0x34, 0x12,
+	0xe3, 0x4a, 0x66, 0x7f, 0x3e, 0xb4, 0xa7, 0x52, 0xeb, 0x5c, 0xbd, 0xe9, 0x15, 0x4e, 0x20, 0x11,
+	0x3c, 0x5f, 0x7d, 0x2e, 0x64, 0x49, 0xf8, 0x77, 0x1a, 0x0c, 0xfc, 0x61, 0x32, 0xee, 0x8d, 0x76,
+	0xec, 0xfc, 0x70, 0x36, 0xf3, 0xc8, 0xf1, 0xe8, 0x29, 0xa9, 0xd3, 0xc6, 0x59, 0x52, 0x9f, 0x92,
+	0x1a, 0x6f, 0x20, 0x64, 0xd4, 0xd0, 0x34, 0xb4, 0xc8, 0xe5, 0x1e, 0x71, 0xae, 0x5e, 0xa8, 0xa1,
+	0x33, 0x8f, 0xd8, 0x91, 0xe7, 0x36, 0xc4, 0x4b, 0x29, 0x0c, 0x17, 0x26, 0x8b, 0x21, 0x7a, 0x2d,
+	0x94, 0xd9, 0x64, 0x8f, 0x90, 0x1c, 0xd9, 0xc2, 0x1e, 0x44, 0x46, 0xaa, 0x7c, 0x99, 0xfa, 0x03,
+	0x7f, 0xd8, 0x26, 0x4e, 0xe0, 0x15, 0x34, 0x0b, 0xfa, 0x33, 0x5f, 0x17, 0x36, 0x52, 0x44, 0x2a,
+	0x95, 0xfd, 0xfa, 0xc7, 0xb4, 0x3e, 0x43, 0xdf, 0x41, 0x24, 0x24, 0xe3, 0x3a, 0x0d, 0x06, 0x8d,
+	0x61, 0x32, 0xbe, 0xae, 0x4b, 0x35, 0x7a, 0x62, 0xac, 0x24, 0x6e, 0xae, 0x7f, 0x0b, 0xe1, 0x56,
+	0x62, 0x17, 0x82, 0x5c, 0x55, 0xbb, 0x82, 0x5c, 0x21, 0x42, 0xa8, 0x64, 0x69, 0x2a, 0x13, 0xf6,
+	0x3b, 0x23, 0x00, 0x87, 0xa4, 0x67, 0x0c, 0xf4, 0xb6, 0x06, 0xc4, 0x92, 0x5b, 0xb0, 0x43, 0x9c,
+	0xc0, 0x14, 0x62, 0x45, 0x37, 0x5f, 0x92, 0x32, 0x7b, 0xdd, 0x1d, 0xb2, 0x93, 0xe3, 0x35, 0x34,
+	0xdd, 0x4e, 0x9c, 0x40, 0x6b, 0xca, 0xcd, 0x3b, 0xe7, 0xa5, 0xc6, 0xda, 0x1e, 0xfb, 0xb5, 0x1d,
+	0x65, 0x1e, 0xde, 0x43, 0xeb, 0x83, 0x0b, 0x66, 0x5d, 0xd5, 0x95, 0xd2, 0xef, 0xee, 0x7f, 0xba,
+	0x22, 0xbc, 0x45, 0xd3, 0xbe, 0xad, 0x87, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0xd6, 0xce, 0xb0,
+	0x1d, 0x6c, 0x02, 0x00, 0x00,
+}
+
+// Reference imports to suppress errors if they are not otherwise used.
+var _ context.Context
+var _ grpc.ClientConn
+
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the grpc package it is being compiled against.
+const _ = grpc.SupportPackageIsVersion4
+
+// GossipClient is the client API for Gossip service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
+type GossipClient interface {
+	GetPeers(ctx context.Context, in *NeighborReq, opts ...grpc.CallOption) (*NeighborRes, error)
+	SendData(ctx context.Context, in *GossipData, opts ...grpc.CallOption) (*Empty, error)
+}
+
+type gossipClient struct {
+	cc *grpc.ClientConn
+}
+
+func NewGossipClient(cc *grpc.ClientConn) GossipClient {
+	return &gossipClient{cc}
+}
+
+func (c *gossipClient) GetPeers(ctx context.Context, in *NeighborReq, opts ...grpc.CallOption) (*NeighborRes, error) {
+	out := new(NeighborRes)
+	err := c.cc.Invoke(ctx, "/message.Gossip/GetPeers", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gossipClient) SendData(ctx context.Context, in *GossipData, opts ...grpc.CallOption) (*Empty, error) {
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, "/message.Gossip/SendData", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GossipServer is the server API for Gossip service.
+type GossipServer interface {
+	GetPeers(context.Context, *NeighborReq) (*NeighborRes, error)
+	SendData(context.Context, *GossipData) (*Empty, error)
+}
+
+// UnimplementedGossipServer can be embedded to have forward compatible implementations.
+type UnimplementedGossipServer struct {
+}
+
+func (*UnimplementedGossipServer) GetPeers(ctx context.Context, req *NeighborReq) (*NeighborRes, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPeers not implemented")
+}
+func (*UnimplementedGossipServer) SendData(ctx context.Context, req *GossipData) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendData not implemented")
+}
+
+func RegisterGossipServer(s *grpc.Server, srv GossipServer) {
+	s.RegisterService(&_Gossip_serviceDesc, srv)
+}
+
+func _Gossip_GetPeers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NeighborReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GossipServer).GetPeers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/message.Gossip/GetPeers",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GossipServer).GetPeers(ctx, req.(*NeighborReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Gossip_SendData_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GossipData)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GossipServer).SendData(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/message.Gossip/SendData",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GossipServer).SendData(ctx, req.(*GossipData))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+var _Gossip_serviceDesc = grpc.ServiceDesc{
+	ServiceName: "message.Gossip",
+	HandlerType: (*GossipServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetPeers",
+			Handler:    _Gossip_GetPeers_Handler,
+		},
+		{
+			MethodName: "SendData",
+			Handler:    _Gossip_SendData_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "message.proto",
 }

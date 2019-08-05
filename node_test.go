@@ -2,7 +2,9 @@ package gossip
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -97,4 +99,39 @@ func TestDiscover(t *testing.T) {
 	node5.PrintPeers()
 	fmt.Println("neighbors of node 6:")
 	node6.PrintPeers()
+}
+
+func TestMessages(t *testing.T) {
+	bootAddr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:7999")
+	bootNode := New(bootAddr, "test topic")
+	bootNode.Listen()
+	var nodes [100]*Node
+	for i := range nodes {
+		addr, _ := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", 8000+i))
+		nodes[i] = New(addr, "test topic")
+		nodes[i].Join([]net.Addr{bootAddr})
+		nodes[i].Listen()
+		nodes[i].StartDiscover()
+	}
+	time.Sleep(20 * time.Second)
+	fmt.Printf("bootNode neighbors: %d\n", bootNode.neighbors.Len())
+	for i := range nodes {
+		fmt.Printf("node %d neighbors: %d\n", i, nodes[i].neighbors.Len())
+	}
+	for i := 0; i < 30; i++ {
+		nodeIndex := rand.Uint32() % 100
+		nodes[nodeIndex].Gossip([]byte(strconv.Itoa(i)))
+	}
+	fmt.Println("messages sent")
+	time.Sleep(2 * time.Second)
+	for i := range nodes {
+		var check map[string]bool
+		for j := 0; j < 30; j++ {
+			msg := string(nodes[i].GetMsg())
+			if _, ok := check[msg]; ok {
+				t.Error("duplicated message")
+			}
+		}
+		fmt.Printf("node %d complete\n", i)
+	}
 }

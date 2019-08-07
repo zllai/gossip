@@ -1,78 +1,78 @@
 package gossip
 
 import (
+	"container/list"
 	"fmt"
-	"math"
 	"math/rand"
-	"net"
 	"sort"
 	"sync"
-	"time"
+
+	"github.com/golang-collections/collections/set"
 )
 
 type NeighborList struct {
-	Capacity     int
-	ActiveRecord map[string]int64
-	lock         *sync.Mutex
-	self         net.Addr
+	cap       int
+	neighbors *list.List
+	blackList *set.Set
+	lock      *sync.RWMutex
 }
 
-type NodeInfo struct {
-	Addr       string `json:"addr"`
-	LastActive int64  `json:"lastActive"`
-}
-
-func NewNeighborList(capacity int, self net.Addr) *NeighborList {
-	return &NeighborList{capacity, make(map[string]int64), &sync.Mutex{}, self}
-}
-
-func (nl *NeighborList) Update(node net.Addr) bool {
-	if node.String() == nl.self.String() {
-		return false
+func NewNeighborList(cap int) *NeighborList {
+	return &NeighborList{
+		cap:       cap,
+		neighbors: list.New(),
+		blackList: set.New(),
+		lock:      &sync.RWMutex{},
 	}
-	current := time.Now().Unix()
+}
+
+func (nl *NeighborList) AddBlackList(nodeId NodeId) {
 	nl.lock.Lock()
 	defer nl.lock.Unlock()
-	if _, ok := nl.ActiveRecord[node.String()]; ok {
-		nl.ActiveRecord[node.String()] = current
-		return false
-	} else {
-		for len(nl.ActiveRecord) >= nl.Capacity {
-			//find least active
-			leastActiveTime := int64(math.MaxInt64)
-			leastActiveAddr := ""
-			for k, v := range nl.ActiveRecord {
-				if v < leastActiveTime {
-					leastActiveTime = v
-					leastActiveAddr = k
-				}
-			}
-			if leastActiveTime != int64(math.MaxInt64) {
-				delete(nl.ActiveRecord, leastActiveAddr)
-			}
+	nl.blackList.Insert(nodeId)
+}
+
+func (nl *NeighborList) Update(nodeId NodeId) {
+	nl.lock.Lock()
+	defer nl.lock.Unlock()
+	if nl.blackList.Has(nodeId) {
+		return
+	}
+
+	var e *list.Element
+	for e = nl.neighbors.Front(); e != nil; e = e.Next() {
+		if e.Value.(NodeId) == nodeId {
+			nl.neighbors.MoveToFront(e)
+			break
 		}
-		nl.ActiveRecord[node.String()] = current
-		return true
+	}
+
+	if e == nil {
+		nl.neighbors.PushFront(nodeId)
+		if nl.neighbors.Len() > nl.cap {
+			nl.neighbors.Remove(nl.neighbors.Back())
+		}
 	}
 }
 
 func (nl *NeighborList) Len() int {
-	return len(nl.ActiveRecord)
+	return nl.neighbors.Len()
 }
 
-func (nl *NeighborList) Sample(num int) []net.Addr {
+func (nl *NeighborList) SampleIdString(num int) []string {
 	nl.lock.Lock()
 	defer nl.lock.Unlock()
-	if num > len(nl.ActiveRecord) {
-		num = len(nl.ActiveRecord)
+	len := nl.Len()
+	if num > len {
+		num = len
 	}
-	ret := make([]net.Addr, num)
-	randIndex := rand.Perm(len(nl.ActiveRecord))[0:num]
+	samples := make([]string, num)
+	randIndex := rand.Perm(len)[0:num]
 	sort.IntSlice(randIndex).Sort()
 	i, j := 0, 0
-	for k, _ := range nl.ActiveRecord {
+	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
 		if i == randIndex[j] {
-			ret[j], _ = net.ResolveUDPAddr("udp", k)
+			samples[j] = e.Value.(NodeId).String()
 			j++
 			if j >= num {
 				break
@@ -80,19 +80,57 @@ func (nl *NeighborList) Sample(num int) []net.Addr {
 		}
 		i++
 	}
-	return ret
+	return samples
 }
 
-func (nl *NeighborList) Print() {
-	for k, v := range nl.ActiveRecord {
-		fmt.Printf("%s\t%d\n", k, v)
+func (nl *NeighborList) SampleNodeId(num int) []NodeId {
+	nl.lock.Lock()
+	defer nl.lock.Unlock()
+	len := nl.Len()
+	if num > len {
+		num = len
+	}
+	samples := make([]NodeId, num)
+	randIndex := rand.Perm(len)[0:num]
+	sort.IntSlice(randIndex).Sort()
+	i, j := 0, 0
+	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
+		if i == randIndex[j] {
+			samples[j] = e.Value.(NodeId)
+			j++
+			if j >= num {
+				break
+			}
+		}
+		i++
+	}
+	return samples
+}
+
+func (nl *NeighborList) Delete(nodeId NodeId) {
+	nl.lock.Lock()
+	defer nl.lock.Unlock()
+	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
+		if e.Value.(NodeId) == nodeId {
+			nl.neighbors.Remove(e)
+		}
 	}
 }
 
-func (nl *NeighborList) List() []NodeInfo {
-	ret := make([]NodeInfo, 0)
-	for k, v := range nl.ActiveRecord {
-		ret = append(ret, NodeInfo{k, v})
+func (nl *NeighborList) Print() {
+	nl.lock.Lock()
+	defer nl.lock.Unlock()
+	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
+		fmt.Printf("%s\n", e.Value.(NodeId).String())
+	}
+}
+
+func (nl *NeighborList) GetNeighborsId() []NodeId {
+	nl.lock.Lock()
+	defer nl.lock.Unlock()
+	ret := make([]NodeId, 0)
+	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
+		ret = append(ret, e.Value.(NodeId))
 	}
 	return ret
 }

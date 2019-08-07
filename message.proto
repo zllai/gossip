@@ -1,0 +1,28 @@
+syntax = "proto3";
+package gossip;
+
+service Gossip {
+    rpc GetPeers(NeighborReq) returns(NeighborRes) {}
+    rpc SendData(GossipData) returns(Empty) {}
+}
+
+message Empty {}
+
+message NeighborReq {
+    string topic = 1;
+    string nodeId = 2;
+    int32 maxNum = 3;
+}
+
+message NeighborRes {
+    string topic = 1;
+    string nodeId = 2;
+    repeated string neighbors = 3;
+}
+
+message GossipData {
+    string topic = 1;
+    string nodeId = 2;
+    uint64 nonce = 3;
+    bytes payload = 4;
+}

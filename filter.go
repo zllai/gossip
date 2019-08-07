@@ -1,4 +1,4 @@
-package filter
+package gossip
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ type Filter struct {
 	lock           *sync.Mutex
 }
 
-func New(truncatePeriod int64) *Filter {
+func NewFilter(truncatePeriod int64) *Filter {
 	current := time.Now().Unix()
 	return &Filter{truncatePeriod, current, make(map[string]int64), &sync.Mutex{}}
 }

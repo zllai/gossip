@@ -1,184 +1,206 @@
 package gossip
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	context "context"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
 	"time"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/zllai/gossip/filter"
-	"github.com/zllai/gossip/message"
-	"github.com/zllai/gossip/ringbuffer"
+	codes "google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"google.golang.org/grpc"
 )
 
 const bufferCap = 5242880 // 5MB
 const neighborListCap = 256
-const gossipFanout = 100
-const broadcastFanout = 256
+const gossipFanout = 10
+const discoveryFanout = 32
+const broadcastFanout = neighborListCap
+
+type NodeId string
+
+func NewNodeId(str string) NodeId {
+	return NodeId(str)
+}
+
+func (id NodeId) Dial() (*grpc.ClientConn, error) {
+	return grpc.Dial(string(id), grpc.WithInsecure())
+}
+
+func (id NodeId) String() string {
+	return string(id)
+}
 
 type Node struct {
-	topic       string
-	addr        net.Addr
-	conn        net.PacketConn
-	neighbors   *NeighborList
-	discovering bool
-	msgBuffer   *ringbuffer.RingBuffer
-	msgFilter   *filter.Filter
+	topic     string
+	nodeId    NodeId
+	neighbors *NeighborList
+	msgBuffer *RingBuffer
+	msgFilter *Filter
 }
 
-func New(addr net.Addr, topic string) *Node {
-	conn, err := net.ListenPacket("udp", addr.String())
-	if err != nil {
-		log.Fatalf("Cannot create udp listener: %s", err.Error())
+func New(nodeId NodeId, topic string) *Node {
+	node := &Node{
+		topic:     topic,
+		nodeId:    nodeId,
+		neighbors: NewNeighborList(neighborListCap),
+		msgBuffer: NewRingBuffer(256),
+		msgFilter: NewFilter(60),
 	}
-	return &Node{
-		topic:       topic,
-		addr:        addr,
-		conn:        conn,
-		neighbors:   NewNeighborList(neighborListCap, addr),
-		discovering: false,
-		msgBuffer:   ringbuffer.New(512),
-		msgFilter:   filter.New(60),
-	}
+	node.neighbors.AddBlackList(nodeId)
+	return node
 }
 
-func (node *Node) serve(addr net.Addr, data []byte) error {
-	//Deserialize data
-	msg := message.GossipMsg{}
-	err := proto.Unmarshal(data, &msg)
+func (node *Node) Listen() error {
+	lis, err := net.Listen("tcp", node.nodeId.String())
 	if err != nil {
-		return err
+		return errors.New(fmt.Sprintf("[gossip] Cannot listen on %s: %s", node.nodeId.String(), err.Error()))
 	}
-
-	switch content := msg.Content.(type) {
-	case *message.GossipMsg_NeighborReq:
-		if content.NeighborReq.Topic != node.topic {
-			return errors.New("Topic mismatch")
-		}
-		samples := node.neighbors.Sample(int(content.NeighborReq.MaxNum))
-		message.ResponseNeighborList(node.conn, addr, node.topic, samples)
-		node.neighbors.Update(addr)
-	case *message.GossipMsg_NeighborRes:
-		if content.NeighborRes.Topic != node.topic {
-			return errors.New("Topic mismatch")
-		}
-		if node.neighbors.Len() < node.neighbors.Capacity {
-			neighborRes := content.NeighborRes.Nodes
-			for i := 0; i < len(neighborRes); i++ {
-				newNeighbor := message.ResAddr2UDPAddr(neighborRes[i])
-				node.neighbors.Update(newNeighbor)
-			}
-			node.neighbors.Update(addr)
-		}
-	case *message.GossipMsg_Data:
-		if content.Data.Topic != node.topic {
-			return errors.New("Topic mismatch")
-		}
-		data := content.Data.Payload
-		nonce := content.Data.Nonce
-		md5Func := md5.New()
-		hash := md5Func.Sum(append(data, nonce...))
-		if node.msgFilter.Check(hex.EncodeToString(hash)) {
-			err = message.GossipToNodes(node.conn, node.neighbors.Sample(gossipFanout), node.topic, data, nonce)
-			if err != nil {
-				log.Printf("Cannot gossip message: %s", err.Error())
-			}
-			node.msgBuffer.Push(content.Data.Payload)
-		}
-	}
-
+	grpcServer := grpc.NewServer()
+	RegisterGossipServer(grpcServer, node)
+	grpcServer.Serve(lis)
 	return nil
 }
 
-func (node *Node) Listen() {
+func (node *Node) GetPeers(ctx context.Context, req *NeighborReq) (*NeighborRes, error) {
+	if req.Topic != node.topic {
+		return nil, status.Errorf(codes.NotFound, "[From %s] topic does not match", node.nodeId.String())
+	}
+	nodeId := NewNodeId(req.NodeId)
+	node.neighbors.Update(nodeId)
+	samples := node.neighbors.SampleIdString(int(req.MaxNum))
+	res := &NeighborRes{
+		Topic:     node.topic,
+		NodeId:    node.nodeId.String(),
+		Neighbors: samples,
+	}
+	return res, nil
+}
+
+func (node *Node) SendData(ctx context.Context, data *GossipData) (*Empty, error) {
+	if data.Topic != node.topic {
+		return nil, status.Errorf(codes.NotFound, "[From %s] topic does not match", node.nodeId.String())
+	}
+	nodeId := NewNodeId(data.NodeId)
+	node.neighbors.Update(nodeId)
+
+	// check redundancy and store in buffer
+	if !node.msgFilter.Check(data.Hash()) {
+		return nil, status.Errorf(codes.NotFound, "[From %s] already received the same message", node.nodeId.String())
+	}
+	node.msgBuffer.Push(data.Payload)
+
+	//gossip to other nodes
+	node.gossipToPeers(data, gossipFanout)
+	return &Empty{}, nil
+}
+
+func (node *Node) gossipToPeers(data *GossipData, fanout int) {
+	nodeIds := node.neighbors.SampleNodeId(fanout)
+	for i := range nodeIds {
+		go func(nodeId NodeId) {
+			conn, err := nodeId.Dial()
+			defer conn.Close()
+			if err != nil {
+				log.Printf("[gossip] node %s cannot dial: %s", nodeId.String(), err.Error())
+				node.neighbors.Delete(nodeId)
+				return
+			}
+			client := NewGossipClient(conn)
+			_, err = client.SendData(context.Background(), data)
+			if err != nil && status.Convert(err).Code() != codes.NotFound {
+				log.Printf("[gossip] node %s cannot send data to node %s: %s", node.nodeId.String(), nodeId.String(), err.Error())
+			}
+		}(nodeIds[i])
+	}
+}
+
+func (node *Node) Join(bootnodes []NodeId) error {
+	// add to neighbor list
+	for i := range bootnodes {
+		node.neighbors.Update(bootnodes[i])
+	}
+
 	go func() {
-		buf := make([]byte, bufferCap)
+		// run discovery forever
 		for {
-			size, addr, err := node.conn.ReadFrom(buf)
-			if err != nil {
-				log.Printf("Discard messge: %s", err.Error())
-				continue
-			}
-			if size == bufferCap {
-				log.Printf("Discard message: message larger than buffer size")
-				continue
-			}
-			err = node.serve(addr, buf[:size])
-			if err != nil {
-				log.Printf("Invalid message: %s", err.Error())
-			}
-		}
-	}()
-}
-
-func (node *Node) Close() {
-	node.conn.Close()
-}
-
-func (node *Node) Join(bootnodes []net.Addr) error {
-	avgReqests := int(float32(neighborListCap) / float32(len(bootnodes)) * 1.2)
-	for i := 0; i < len(bootnodes); i++ {
-		err := message.RequestNeighborList(node.conn, bootnodes[i], node.topic, avgReqests)
-		if err != nil {
-			log.Printf("Cannot connect to bootnode %s: %s", bootnodes[i].String(), err.Error())
-		}
-	}
-	return nil
-}
-
-func (node *Node) StartDiscover() error {
-	if node.discovering {
-		return errors.New("Peer discovery already started")
-	}
-	node.discovering = true
-	go func() {
-		for node.discovering {
+			// whether not enough peers
 			if node.neighbors.Len() >= neighborListCap {
-				time.Sleep(10 * time.Second)
+				time.Sleep(5 * time.Second)
 				continue
 			}
-			samples := node.neighbors.Sample(5)
-			for i := 0; i < len(samples); i++ {
-				err := message.RequestNeighborList(node.conn, samples[i], node.topic, (neighborListCap-node.neighbors.Len())/len(samples))
-				if err != nil {
-					log.Printf("Cannot connect to peer %s: %s", samples[i].String(), err.Error())
-				}
+
+			// how many peers to ask
+			fanout := discoveryFanout
+			if fanout > node.neighbors.Len() {
+				fanout = node.neighbors.Len()
 			}
-			time.Sleep(10 * time.Second)
+
+			// construct request
+			avgReqests := int(float32(neighborListCap-node.neighbors.Len()) / float32(fanout) * 1.2)
+			req := &NeighborReq{
+				Topic:  node.topic,
+				NodeId: node.nodeId.String(),
+				MaxNum: int32(avgReqests),
+			}
+
+			nodeIds := node.neighbors.SampleNodeId(fanout)
+			for i := range nodeIds {
+				go func(nodeId NodeId) {
+					conn, err := nodeId.Dial()
+					defer conn.Close()
+					if err != nil {
+						log.Printf("[gossip] node %s cannot dial: %s", nodeId.String(), err.Error())
+						node.neighbors.Delete(nodeId)
+						return
+					}
+					client := NewGossipClient(conn)
+					res, err := client.GetPeers(context.Background(), req)
+					if err != nil {
+						//log.Printf("[gossip] node %s cannot call GetPeer: %s", nodeId.String(), err.Error())
+						return
+					}
+					for j := range res.Neighbors {
+						node.neighbors.Update(NewNodeId(res.Neighbors[j]))
+					}
+				}(nodeIds[i])
+			}
+			time.Sleep(5 * time.Second)
 		}
 	}()
+
 	return nil
 }
 
-func (node *Node) StopDiscover() {
-	node.discovering = false
-}
-
-func (node *Node) Gossip(data []byte) error {
-	nonce := make([]byte, 4)
-	_, err := rand.Read(nonce)
-	if err != nil {
-		return err
+func (node *Node) Gossip(data []byte) {
+	nonce := rand.Uint64()
+	gossipData := &GossipData{
+		Topic:   node.topic,
+		NodeId:  node.nodeId.String(),
+		Nonce:   nonce,
+		Payload: data,
 	}
-	md5Func := md5.New()
-	hash := md5Func.Sum(append(data, nonce...))
-	node.msgFilter.Check(hex.EncodeToString(hash))
-	err = message.GossipToNodes(node.conn, node.neighbors.Sample(broadcastFanout), node.topic, data, nonce)
-	return err
+
+	// gossip to self
+	if node.msgFilter.Check(gossipData.Hash()) {
+		node.msgBuffer.Push(data)
+	}
+
+	node.gossipToPeers(gossipData, broadcastFanout)
 }
 
 func (node *Node) GetMsg() []byte {
-	return node.msgBuffer.Pop()
+	return node.msgBuffer.Pop().([]byte)
 }
 
 func (node *Node) PrintPeers() {
 	node.neighbors.Print()
 }
 
-func (node *Node) ListPeers() []NodeInfo {
-	return node.neighbors.List()
+func (node *Node) ListPeers() []NodeId {
+	return node.neighbors.GetNeighborsId()
 }

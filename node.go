@@ -17,8 +17,8 @@ import (
 
 const bufferCap = 5242880 // 5MB
 const neighborListCap = 256
-const gossipFanout = 10
-const discoveryFanout = 32
+const gossipFanout = 8
+const discoveryFanout = 8
 const broadcastFanout = neighborListCap
 
 type NodeId string
@@ -66,6 +66,10 @@ func (node *Node) Listen() error {
 	return nil
 }
 
+func (node *Node) Register(grpcServer *grpc.Server) {
+	RegisterGossipServer(grpcServer, node)
+}
+
 func (node *Node) GetPeers(ctx context.Context, req *NeighborReq) (*NeighborRes, error) {
 	if req.Topic != node.topic {
 		return nil, status.Errorf(codes.NotFound, "[From %s] topic does not match", node.nodeId.String())
@@ -100,22 +104,16 @@ func (node *Node) SendData(ctx context.Context, data *GossipData) (*Empty, error
 }
 
 func (node *Node) gossipToPeers(data *GossipData, fanout int) {
-	nodeIds := node.neighbors.SampleNodeId(fanout)
-	for i := range nodeIds {
-		go func(nodeId NodeId) {
-			conn, err := nodeId.Dial()
-			defer conn.Close()
-			if err != nil {
-				log.Printf("[gossip] node %s cannot dial: %s", nodeId.String(), err.Error())
-				node.neighbors.Delete(nodeId)
-				return
-			}
-			client := NewGossipClient(conn)
-			_, err = client.SendData(context.Background(), data)
+	connInfos := node.neighbors.SampleConnInfo(fanout)
+	for i := range connInfos {
+		go func(connInfo ConnInfo) {
+			client := NewGossipClient(connInfo.conn)
+			_, err := client.SendData(context.Background(), data)
 			if err != nil && status.Convert(err).Code() != codes.NotFound {
-				log.Printf("[gossip] node %s cannot send data to node %s: %s", node.nodeId.String(), nodeId.String(), err.Error())
+				log.Printf("[gossip] Cannot send data to node %s: %s", connInfo.nodeId.String(), err.Error())
+				node.neighbors.Reconnect(connInfo.nodeId)
 			}
-		}(nodeIds[i])
+		}(connInfos[i])
 	}
 }
 
@@ -148,26 +146,20 @@ func (node *Node) Join(bootnodes []NodeId) error {
 				MaxNum: int32(avgReqests),
 			}
 
-			nodeIds := node.neighbors.SampleNodeId(fanout)
-			for i := range nodeIds {
-				go func(nodeId NodeId) {
-					conn, err := nodeId.Dial()
-					defer conn.Close()
-					if err != nil {
-						log.Printf("[gossip] node %s cannot dial: %s", nodeId.String(), err.Error())
-						node.neighbors.Delete(nodeId)
-						return
-					}
-					client := NewGossipClient(conn)
+			connInfos := node.neighbors.SampleConnInfo(fanout)
+			for i := range connInfos {
+				go func(connInfo ConnInfo) {
+					client := NewGossipClient(connInfo.conn)
 					res, err := client.GetPeers(context.Background(), req)
 					if err != nil {
-						//log.Printf("[gossip] node %s cannot call GetPeer: %s", nodeId.String(), err.Error())
+						log.Printf("[gossip] node %s cannot call GetPeer: %s", connInfo.nodeId.String(), err.Error())
+						node.neighbors.Reconnect(connInfo.nodeId)
 						return
 					}
 					for j := range res.Neighbors {
 						node.neighbors.Update(NewNodeId(res.Neighbors[j]))
 					}
-				}(nodeIds[i])
+				}(connInfos[i])
 			}
 			time.Sleep(5 * time.Second)
 		}

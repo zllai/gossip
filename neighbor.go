@@ -3,11 +3,13 @@ package gossip
 import (
 	"container/list"
 	"fmt"
+	"log"
 	"math/rand"
 	"sort"
 	"sync"
 
 	"github.com/golang-collections/collections/set"
+	"google.golang.org/grpc"
 )
 
 type NeighborList struct {
@@ -15,6 +17,11 @@ type NeighborList struct {
 	neighbors *list.List
 	blackList *set.Set
 	lock      *sync.RWMutex
+}
+
+type ConnInfo struct {
+	nodeId NodeId
+	conn   *grpc.ClientConn
 }
 
 func NewNeighborList(cap int) *NeighborList {
@@ -41,16 +48,23 @@ func (nl *NeighborList) Update(nodeId NodeId) {
 
 	var e *list.Element
 	for e = nl.neighbors.Front(); e != nil; e = e.Next() {
-		if e.Value.(NodeId) == nodeId {
+		if e.Value.(ConnInfo).nodeId == nodeId {
 			nl.neighbors.MoveToFront(e)
 			break
 		}
 	}
 
 	if e == nil {
-		nl.neighbors.PushFront(nodeId)
+		conn, err := nodeId.Dial()
+		if err != nil {
+			log.Printf("[gossip] cannot dial node %s: %s", nodeId.String(), err.Error())
+			return
+		}
+		nl.neighbors.PushFront(ConnInfo{nodeId, conn})
 		if nl.neighbors.Len() > nl.cap {
-			nl.neighbors.Remove(nl.neighbors.Back())
+			last := nl.neighbors.Back()
+			last.Value.(ConnInfo).conn.Close()
+			nl.neighbors.Remove(last)
 		}
 	}
 }
@@ -72,7 +86,7 @@ func (nl *NeighborList) SampleIdString(num int) []string {
 	i, j := 0, 0
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
 		if i == randIndex[j] {
-			samples[j] = e.Value.(NodeId).String()
+			samples[j] = e.Value.(ConnInfo).nodeId.String()
 			j++
 			if j >= num {
 				break
@@ -96,7 +110,7 @@ func (nl *NeighborList) SampleNodeId(num int) []NodeId {
 	i, j := 0, 0
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
 		if i == randIndex[j] {
-			samples[j] = e.Value.(NodeId)
+			samples[j] = e.Value.(ConnInfo).nodeId
 			j++
 			if j >= num {
 				break
@@ -105,6 +119,49 @@ func (nl *NeighborList) SampleNodeId(num int) []NodeId {
 		i++
 	}
 	return samples
+}
+
+func (nl *NeighborList) SampleConnInfo(num int) []ConnInfo {
+	nl.lock.Lock()
+	defer nl.lock.Unlock()
+	len := nl.Len()
+	if num > len {
+		num = len
+	}
+	samples := make([]ConnInfo, num)
+	randIndex := rand.Perm(len)[0:num]
+	sort.IntSlice(randIndex).Sort()
+	i, j := 0, 0
+	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
+		if i == randIndex[j] {
+			samples[j] = e.Value.(ConnInfo)
+			j++
+			if j >= num {
+				break
+			}
+		}
+		i++
+	}
+	return samples
+}
+
+func (nl *NeighborList) Reconnect(nodeId NodeId) {
+	nl.lock.Lock()
+	defer nl.lock.Unlock()
+	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
+		connInfo := e.Value.(ConnInfo)
+		if connInfo.nodeId == nodeId {
+			nl.neighbors.Remove(e)
+			connInfo.conn.Close()
+			var err error
+			connInfo.conn, err = connInfo.nodeId.Dial()
+			if err != nil {
+				log.Printf("[gossip] Cannot dial node %s: %s", nodeId.String(), err.Error())
+				return
+			}
+			nl.neighbors.PushBack(connInfo)
+		}
+	}
 }
 
 func (nl *NeighborList) Delete(nodeId NodeId) {
@@ -121,7 +178,7 @@ func (nl *NeighborList) Print() {
 	nl.lock.Lock()
 	defer nl.lock.Unlock()
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
-		fmt.Printf("%s\n", e.Value.(NodeId).String())
+		fmt.Printf("%s\n", e.Value.(ConnInfo).nodeId.String())
 	}
 }
 
@@ -130,7 +187,7 @@ func (nl *NeighborList) GetNeighborsId() []NodeId {
 	defer nl.lock.Unlock()
 	ret := make([]NodeId, 0)
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
-		ret = append(ret, e.Value.(NodeId))
+		ret = append(ret, e.Value.(ConnInfo).nodeId)
 	}
 	return ret
 }

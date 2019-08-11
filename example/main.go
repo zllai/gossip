@@ -25,7 +25,7 @@ func main() {
 	reader := bufio.NewReader(os.Stdin)
 	go func() {
 		for {
-			msg := node.GetMsg()
+			msg := <-node.GetMsgChan()
 			fmt.Println(string(msg))
 		}
 	}()

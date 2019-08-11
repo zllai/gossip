@@ -36,7 +36,7 @@ func TestMessages(t *testing.T) {
 	for i := range nodes {
 		var check map[string]bool
 		for j := 0; j < 100; j++ {
-			msg := string(nodes[i].GetMsg())
+			msg := string(<-nodes[i].GetMsgChan())
 			if _, ok := check[msg]; ok {
 				t.Error("duplicated message")
 			}

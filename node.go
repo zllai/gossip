@@ -15,9 +15,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-const bufferCap = 5242880 // 5MB
+const bufferCap = 256
 const neighborListCap = 256
-const gossipFanout = 8
+const gossipFanout = 16
 const discoveryFanout = 8
 const broadcastFanout = neighborListCap
 
@@ -39,8 +39,8 @@ type Node struct {
 	topic     string
 	nodeId    NodeId
 	neighbors *NeighborList
-	msgBuffer *RingBuffer
 	msgFilter *Filter
+	msgChan   chan []byte
 }
 
 func New(nodeId NodeId, topic string) *Node {
@@ -48,7 +48,7 @@ func New(nodeId NodeId, topic string) *Node {
 		topic:     topic,
 		nodeId:    nodeId,
 		neighbors: NewNeighborList(neighborListCap),
-		msgBuffer: NewRingBuffer(256),
+		msgChan:   make(chan []byte, bufferCap),
 		msgFilter: NewFilter(60),
 	}
 	node.neighbors.AddBlackList(nodeId)
@@ -96,7 +96,7 @@ func (node *Node) SendData(ctx context.Context, data *GossipData) (*Empty, error
 	if !node.msgFilter.Check(data.Hash()) {
 		return nil, status.Errorf(codes.NotFound, "[From %s] already received the same message", node.nodeId.String())
 	}
-	node.msgBuffer.Push(data.Payload)
+	node.msgChan <- data.Payload
 
 	//gossip to other nodes
 	node.gossipToPeers(data, gossipFanout)
@@ -179,14 +179,14 @@ func (node *Node) Gossip(data []byte) {
 
 	// gossip to self
 	if node.msgFilter.Check(gossipData.Hash()) {
-		node.msgBuffer.Push(data)
+		node.msgChan <- data
 	}
 
 	node.gossipToPeers(gossipData, broadcastFanout)
 }
 
-func (node *Node) GetMsg() []byte {
-	return node.msgBuffer.Pop().([]byte)
+func (node *Node) GetMsgChan() chan []byte {
+	return node.msgChan
 }
 
 func (node *Node) PrintPeers() {

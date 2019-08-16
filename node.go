@@ -206,3 +206,7 @@ func (node *Node) PrintPeers() {
 func (node *Node) ListPeers() []NodeId {
 	return node.neighbors.GetNeighborsId()
 }
+
+func (node *Node) GetPeerConn(nodeId NodeId) (*grpc.ClientConn, error) {
+	return node.neighbors.GetConn(nodeId)
+}

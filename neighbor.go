@@ -2,6 +2,7 @@ package gossip
 
 import (
 	"container/list"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -15,19 +16,16 @@ import (
 type NeighborList struct {
 	cap       int
 	neighbors *list.List
+	connPool  map[NodeId]*grpc.ClientConn
 	blackList *set.Set
 	lock      *sync.RWMutex
-}
-
-type ConnInfo struct {
-	nodeId NodeId
-	conn   *grpc.ClientConn
 }
 
 func NewNeighborList(cap int) *NeighborList {
 	return &NeighborList{
 		cap:       cap,
 		neighbors: list.New(),
+		connPool:  make(map[NodeId]*grpc.ClientConn),
 		blackList: set.New(),
 		lock:      &sync.RWMutex{},
 	}
@@ -46,25 +44,27 @@ func (nl *NeighborList) Update(nodeId NodeId) {
 		return
 	}
 
-	var e *list.Element
-	for e = nl.neighbors.Front(); e != nil; e = e.Next() {
-		if e.Value.(ConnInfo).nodeId == nodeId {
-			nl.neighbors.MoveToFront(e)
-			break
-		}
-	}
-
-	if e == nil {
+	if _, ok := nl.connPool[nodeId]; !ok {
 		conn, err := nodeId.Dial()
 		if err != nil {
 			log.Printf("[gossip] cannot dial node %s: %s", nodeId.String(), err.Error())
 			return
 		}
-		nl.neighbors.PushFront(ConnInfo{nodeId, conn})
+		nl.neighbors.PushFront(nodeId)
+		nl.connPool[nodeId] = conn
 		if nl.neighbors.Len() > nl.cap {
 			last := nl.neighbors.Back()
-			last.Value.(ConnInfo).conn.Close()
+			nl.connPool[last.Value.(NodeId)].Close()
+			delete(nl.connPool, last.Value.(NodeId))
 			nl.neighbors.Remove(last)
+		}
+	}
+
+	var e *list.Element
+	for e = nl.neighbors.Front(); e != nil; e = e.Next() {
+		if e.Value.(NodeId) == nodeId {
+			nl.neighbors.MoveToFront(e)
+			break
 		}
 	}
 }
@@ -74,8 +74,8 @@ func (nl *NeighborList) Len() int {
 }
 
 func (nl *NeighborList) SampleIdString(num int) []string {
-	nl.lock.Lock()
-	defer nl.lock.Unlock()
+	nl.lock.RLock()
+	defer nl.lock.RUnlock()
 	len := nl.Len()
 	if num > len {
 		num = len
@@ -86,7 +86,7 @@ func (nl *NeighborList) SampleIdString(num int) []string {
 	i, j := 0, 0
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
 		if i == randIndex[j] {
-			samples[j] = e.Value.(ConnInfo).nodeId.String()
+			samples[j] = e.Value.(NodeId).String()
 			j++
 			if j >= num {
 				break
@@ -98,8 +98,8 @@ func (nl *NeighborList) SampleIdString(num int) []string {
 }
 
 func (nl *NeighborList) SampleNodeId(num int) []NodeId {
-	nl.lock.Lock()
-	defer nl.lock.Unlock()
+	nl.lock.RLock()
+	defer nl.lock.RUnlock()
 	len := nl.Len()
 	if num > len {
 		num = len
@@ -110,31 +110,7 @@ func (nl *NeighborList) SampleNodeId(num int) []NodeId {
 	i, j := 0, 0
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
 		if i == randIndex[j] {
-			samples[j] = e.Value.(ConnInfo).nodeId
-			j++
-			if j >= num {
-				break
-			}
-		}
-		i++
-	}
-	return samples
-}
-
-func (nl *NeighborList) SampleConnInfo(num int) []ConnInfo {
-	nl.lock.Lock()
-	defer nl.lock.Unlock()
-	len := nl.Len()
-	if num > len {
-		num = len
-	}
-	samples := make([]ConnInfo, num)
-	randIndex := rand.Perm(len)[0:num]
-	sort.IntSlice(randIndex).Sort()
-	i, j := 0, 0
-	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
-		if i == randIndex[j] {
-			samples[j] = e.Value.(ConnInfo)
+			samples[j] = e.Value.(NodeId)
 			j++
 			if j >= num {
 				break
@@ -149,45 +125,46 @@ func (nl *NeighborList) Reconnect(nodeId NodeId) {
 	nl.lock.Lock()
 	defer nl.lock.Unlock()
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
-		connInfo := e.Value.(ConnInfo)
-		if connInfo.nodeId == nodeId {
-			nl.neighbors.Remove(e)
-			connInfo.conn.Close()
+		if e.Value.(NodeId) == nodeId {
+			nl.connPool[nodeId].Close()
 			var err error
-			connInfo.conn, err = connInfo.nodeId.Dial()
+			nl.connPool[nodeId], err = nodeId.Dial()
 			if err != nil {
 				log.Printf("[gossip] Cannot dial node %s: %s", nodeId.String(), err.Error())
+				nl.neighbors.Remove(e)
+				delete(nl.connPool, nodeId)
 				return
 			}
-			nl.neighbors.PushBack(connInfo)
-		}
-	}
-}
-
-func (nl *NeighborList) Delete(nodeId NodeId) {
-	nl.lock.Lock()
-	defer nl.lock.Unlock()
-	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
-		if e.Value.(NodeId) == nodeId {
-			nl.neighbors.Remove(e)
+			nl.neighbors.MoveToBack(e)
+			break
 		}
 	}
 }
 
 func (nl *NeighborList) Print() {
-	nl.lock.Lock()
-	defer nl.lock.Unlock()
+	nl.lock.RLock()
+	defer nl.lock.RUnlock()
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
-		fmt.Printf("%s\n", e.Value.(ConnInfo).nodeId.String())
+		fmt.Printf("%s\n", e.Value.(NodeId).String())
 	}
 }
 
 func (nl *NeighborList) GetNeighborsId() []NodeId {
-	nl.lock.Lock()
-	defer nl.lock.Unlock()
+	nl.lock.RLock()
+	defer nl.lock.RUnlock()
 	ret := make([]NodeId, 0)
 	for e := nl.neighbors.Front(); e != nil; e = e.Next() {
-		ret = append(ret, e.Value.(ConnInfo).nodeId)
+		ret = append(ret, e.Value.(NodeId))
 	}
 	return ret
+}
+
+func (nl *NeighborList) GetConn(nodeId NodeId) (*grpc.ClientConn, error) {
+	nl.lock.RLock()
+	defer nl.lock.RUnlock()
+	if conn, ok := nl.connPool[nodeId]; ok {
+		return conn, nil
+	} else {
+		return nil, errors.New("conn not found")
+	}
 }

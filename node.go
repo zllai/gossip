@@ -104,16 +104,21 @@ func (node *Node) SendData(ctx context.Context, data *GossipData) (*Empty, error
 }
 
 func (node *Node) gossipToPeers(data *GossipData, fanout int) {
-	connInfos := node.neighbors.SampleConnInfo(fanout)
-	for i := range connInfos {
-		go func(connInfo ConnInfo) {
-			client := NewGossipClient(connInfo.conn)
-			_, err := client.SendData(context.Background(), data)
-			if err != nil && status.Convert(err).Code() != codes.NotFound {
-				log.Printf("[gossip] Cannot send data to node %s: %s", connInfo.nodeId.String(), err.Error())
-				node.neighbors.Reconnect(connInfo.nodeId)
+	nodeIds := node.neighbors.SampleNodeId(fanout)
+	for i := range nodeIds {
+		go func(nodeId NodeId) {
+			conn, err := node.neighbors.GetConn(nodeId)
+			if err != nil {
+				log.Printf("[gossip] Connection to %s is closed", nodeId.String())
+				return
 			}
-		}(connInfos[i])
+			client := NewGossipClient(conn)
+			_, err = client.SendData(context.Background(), data)
+			if err != nil && status.Convert(err).Code() != codes.NotFound {
+				log.Printf("[gossip] Cannot send data to node %s: %s", nodeId.String(), err.Error())
+				node.neighbors.Reconnect(nodeId)
+			}
+		}(nodeIds[i])
 	}
 }
 
@@ -146,20 +151,25 @@ func (node *Node) Join(bootnodes []NodeId) error {
 				MaxNum: int32(avgReqests),
 			}
 
-			connInfos := node.neighbors.SampleConnInfo(fanout)
-			for i := range connInfos {
-				go func(connInfo ConnInfo) {
-					client := NewGossipClient(connInfo.conn)
+			nodeIds := node.neighbors.SampleNodeId(fanout)
+			for i := range nodeIds {
+				go func(nodeId NodeId) {
+					conn, err := node.neighbors.GetConn(nodeId)
+					if err != nil {
+						log.Printf("[gossip] connection to %s is closed", nodeId.String())
+						return
+					}
+					client := NewGossipClient(conn)
 					res, err := client.GetPeers(context.Background(), req)
 					if err != nil {
-						log.Printf("[gossip] node %s cannot call GetPeer: %s", connInfo.nodeId.String(), err.Error())
-						node.neighbors.Reconnect(connInfo.nodeId)
+						log.Printf("[gossip] node %s cannot call GetPeer: %s", nodeId.String(), err.Error())
+						node.neighbors.Reconnect(nodeId)
 						return
 					}
 					for j := range res.Neighbors {
 						node.neighbors.Update(NewNodeId(res.Neighbors[j]))
 					}
-				}(connInfos[i])
+				}(nodeIds[i])
 			}
 			time.Sleep(5 * time.Second)
 		}

@@ -203,10 +203,6 @@ func (node *Node) PrintPeers() {
 	node.neighbors.Print()
 }
 
-func (node *Node) ListPeers() []NodeId {
-	return node.neighbors.GetNeighborsId()
-}
-
-func (node *Node) GetPeerConn(nodeId NodeId) (*grpc.ClientConn, error) {
-	return node.neighbors.GetConn(nodeId)
+func (node *Node) GetNeighborList(NodeId) *NeighborList {
+	return node.neighbors
 }

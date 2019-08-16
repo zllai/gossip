@@ -203,6 +203,6 @@ func (node *Node) PrintPeers() {
 	node.neighbors.Print()
 }
 
-func (node *Node) GetNeighborList(NodeId) *NeighborList {
+func (node *Node) GetNeighborList() *NeighborList {
 	return node.neighbors
 }
